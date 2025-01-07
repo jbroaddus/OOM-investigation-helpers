@@ -41,12 +41,12 @@ using Sequence_t = std::vector<SequenceEntry_t>;                         // Yaml
 
 // Definitions
 
-DEFINITION_TYPE HELP_OPT_STR{ "help,h" };                // help option values
-DEFINITION_TYPE HELP_OPT_KEY_STR{ "help" };              // help option key
-DEFINITION_TYPE PAUSE_TIME_OPT_STR{ "pause_time,p" };    // pause time option values
-DEFINITION_TYPE PAUSE_TIME_OPT_KEY_STR{ "pause_time" };  // pause time option key
-DEFINITION_TYPE ODIR_OPT_STR{ "odir,o" };                // output directory option values
-DEFINITION_TYPE ODIR_OPT_KEY_STR{ "odir" };              // output directory option keys
+DEFINITION_TYPE HELP_OPT_STR{ "help,h" };              // help option values
+DEFINITION_TYPE HELP_OPT_KEY_STR{ "help" };            // help option key
+DEFINITION_TYPE FREQUENCY_OPT_STR{ "frequency,f" };    // frequency option values
+DEFINITION_TYPE FREQUENCY_OPT_KEY_STR{ "frequency" };  // frequency option key
+DEFINITION_TYPE ODIR_OPT_STR{ "odir,o" };              // output directory option values
+DEFINITION_TYPE ODIR_OPT_KEY_STR{ "odir" };            // output directory option keys
 DEFINITION_TYPE DESC_MSG_STR{
   "Records memory order availability for the buddy allocator over the life cycle of the program.\nAllowed "  // Description
                                                                                                              // message
@@ -58,7 +58,7 @@ DEFINITION_TYPE OUTPUT_FILE_PREFIX{ "buddy-recorder_" };                      //
 
 // Other static variables
 
-static constexpr int DEFAULT_PAUSE_TIME_MS{ 0 };                    // Default pause time (if no value is given via the CLI option)
+static constexpr int DEFAULT_FREQUENCY_HZ{ 1 };                     // Default pause time (if no value is given via the CLI option)
 static std::exception_ptr P_RECORDING_THREAD_EXCEPTION{ nullptr };  // Exception pointer to propagate exception thrown in the child recording thread
                                                                     // to parent thread
 
@@ -127,16 +127,43 @@ static std::exception_ptr P_RECORDING_THREAD_EXCEPTION{ nullptr };  // Exception
  * @param r_time_point
  * @return std::string
  */
-[[nodiscard]] static inline std::string generateFileName(const TimePoint_t& r_time_point)
+[[nodiscard]] static inline std::string formatTimePoint(const TimePoint_t& r_time_point)
 {
   auto time = std::chrono::system_clock::to_time_t(r_time_point);
   std::tm tm = *std::localtime(&time);
 
   std::stringstream ss;
-
-  ss << OUTPUT_FILE_PREFIX << std::put_time(&tm, "%Y_%m_%d_%H_%M_%S") << ".yaml";
+  ss << std::put_time(&tm, "%Y_%m_%d_%H_%M_%S");
 
   return ss.str();
+}
+
+/**
+ * @brief
+ *
+ * @param r_time_point
+ * @return std::string
+ */
+[[nodiscard]] static inline std::string formatTimePointHumanReadable(const TimePoint_t& r_time_point)
+{
+  auto time = std::chrono::system_clock::to_time_t(r_time_point);
+  std::tm tm = *std::localtime(&time);
+
+  std::stringstream ss;
+  ss << std::put_time(&tm, "%B %d, %Y %H:%M:%S");
+
+  return ss.str();
+}
+
+/**
+ * @brief
+ *
+ * @param r_time_point
+ * @return std::string
+ */
+[[nodiscard]] static inline std::string generateFileName(const TimePoint_t& r_time_point)
+{
+  return OUTPUT_FILE_PREFIX + formatTimePoint(r_time_point) + ".yaml";
 }
 
 /**
@@ -182,6 +209,10 @@ static std::exception_ptr P_RECORDING_THREAD_EXCEPTION{ nullptr };  // Exception
 
       // TODO add entry to recorded sequence!
 
+      auto duration = time_point.time_since_epoch();
+      auto epoch_s = std::chrono::duration_cast<std::chrono::seconds>(duration);
+      recorded_sequence.emplace_back(std::move(order_values_vec), formatTimePointHumanReadable(time_point), epoch_s.count());
+
       std::this_thread::sleep_for(std::chrono::milliseconds(pause_time_ms));
     }
   }
@@ -192,6 +223,7 @@ static std::exception_ptr P_RECORDING_THREAD_EXCEPTION{ nullptr };  // Exception
   }
   catch (...)
   {
+    std::cerr << "Unknown object was thrown and caught in the child thread" << std::endl;
     P_RECORDING_THREAD_EXCEPTION = nullptr;
     child_signal_abort = true;
   }
@@ -208,11 +240,13 @@ int main(int argc, char** argv)
   // Acquire start time of the program
   auto start_time = std::chrono::system_clock::now();
 
+  std::cout << formatTimePointHumanReadable(start_time) << std::endl;
+
   // Define options
 
   po_ns::options_description desc(DESC_MSG_STR);
   desc.add_options()(HELP_OPT_STR, "Display help message")(
-      PAUSE_TIME_OPT_STR, po_ns::value<int>()->default_value(DEFAULT_PAUSE_TIME_MS), "Pause time (in milliseconds) for every iteration")(
+      FREQUENCY_OPT_STR, po_ns::value<float>()->default_value(DEFAULT_FREQUENCY_HZ), "Frequency of checking the memory order in hertz")(
       ODIR_OPT_STR, po_ns::value<std::string>()->default_value(DEFAULT_OUTPUT_DIR_PATH_STR), "Output directory path");
 
   // Parse the CLI options and store valid entries in a Boost variable map
@@ -231,7 +265,7 @@ int main(int argc, char** argv)
 
   // Extract option values
 
-  const auto pause_time_ms = vm[PAUSE_TIME_OPT_KEY_STR].as<int>();
+  const auto frequency_hz = vm[FREQUENCY_OPT_KEY_STR].as<float>();
   auto output_directory_path_str = vm[ODIR_OPT_KEY_STR].as<std::string>();
 
   // Append a trailing forward slash if necessary
@@ -243,8 +277,10 @@ int main(int argc, char** argv)
   // Print option values
 
   std::cout << "=== Parameters ===" << '\n';
-  std::cout << "Pause time (ms): " << pause_time_ms << '\n';
+  std::cout << "Frequency (Hz): " << frequency_hz << '\n';
   std::cout << "Output directory: " << output_directory_path_str << std::endl;
+
+  auto pause_time_ms = (1.f / frequency_hz) * 1000;
 
   // Main try-catch block
   try
@@ -261,6 +297,19 @@ int main(int argc, char** argv)
     while (true)
     {
       // Wait for user feedback for the child thread to be signalled to stop
+      // TODO check for key press here
+
+      if (child_signal_abort == true)
+      {
+        if (P_RECORDING_THREAD_EXCEPTION == nullptr)
+        {
+          throw std::runtime_error{ "No exception from child thread to rethrow even though child thread aborted!" };
+        }
+
+        future.wait();
+
+        std::rethrow_exception(P_RECORDING_THREAD_EXCEPTION);
+      }
     }
 
     future.wait();

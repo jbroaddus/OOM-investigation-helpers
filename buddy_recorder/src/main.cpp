@@ -25,9 +25,6 @@
 // Internal headers
 #include <thread_safe_event.h>
 
-// TODO get termios functionality up and going for non-blocking key press check!
-// Look into this solution --> https://stackoverflow.com/questions/27968446/test-whether-key-is-pressed-without-blocking-on-linux
-
 // Third party includes
 #include <boost/program_options.hpp>
 #include <yaml-cpp/yaml.h>
@@ -54,6 +51,7 @@ namespace po_ns = boost::program_options;
 
 using TimePoint_t = std::chrono::system_clock::time_point;  // time_point type alias
 using Sequence_t = std::vector<YAML::Node>;                 // Yaml sequence type
+using OrderQuantityMap_t = std::map<int, int>;
 
 // Definitions
 
@@ -123,9 +121,9 @@ static termios NEW_T;
  * @param normal_line_str
  * @return std::vector<int>
  */
-[[nodiscard]] static std::vector<int> getOrderValues(const std::string normal_line_str)
+[[nodiscard]] static OrderQuantityMap_t getOrderQuantityMap(const std::string normal_line_str)
 {
-  std::vector<int> order_values_vec;
+  OrderQuantityMap_t order_quantity_map;
 
   auto pos = normal_line_str.find("Normal");
   if (pos == std::string::npos)
@@ -135,14 +133,15 @@ static termios NEW_T;
 
   std::stringstream ss(normal_line_str.substr(pos + 6));  // Incrementing the starting position of the sub str by a constant 6 characters as that is
                                                           // the number of characters in "Normal"
-
+  int order { 0 };
   int val;
   while (ss >> val)  // exctracting out each value for every order reported
   {
-    order_values_vec.push_back(val);
+    order_quantity_map.emplace(order, val);
+    ++order;
   }
 
-  return order_values_vec;
+  return order_quantity_map;
 }
 
 /**
@@ -315,18 +314,15 @@ static inline void cleanupTerminalSettingsAfterSignal(int signum)
 
       // Extract the order values from the normal line
 
-      const auto order_values_vec = getOrderValues(line);
+      const auto order_quantity_map = getOrderQuantityMap(line);
 
       // Add entry to recorded sequence!
 
-      auto duration = time_point.time_since_epoch();
-      auto epoch_s = std::chrono::duration_cast<std::chrono::seconds>(duration);
-
       YAML::Node entry_node;
-      entry_node["order_quantities"] = order_values_vec;
+      entry_node["order_quantities"] = order_quantity_map;
       entry_node["formatted_time"] = formatTimePointHumanReadable(time_point);
       entry_node["event"] = CURRENT_EVENT.getEvent();
-      entry_node["epoch_ts"] = epoch_s.count();
+      entry_node["time_stamp"] = formatTimePoint(time_point);
 
       recorded_sequence.push_back(std::move(entry_node));
 
@@ -407,10 +403,10 @@ int main(int argc, char** argv)
 
   std::cout << "=== Parameters ===" << '\n';
   std::cout << "Frequency (Hz): " << frequency_hz << '\n';
-  std::cout << "Output directory: " << output_directory_path_str << std::endl;
+  std::cout << "Output directory: " << output_directory_path_str << '\n';
   std::cout << "Event list input path: " << (event_list_input_path.empty() ? "N/A" : event_list_input_path) << std::endl;
 
-  std::cout << "=== Usage ===" << '\n';
+  std::cout << "\n=== Usage ===" << '\n';
   std::cout << "x - exit program and generate a session file" << '\n';
   std::cout << "l - log next event from the event ready queue" << std::endl;
 
@@ -537,7 +533,7 @@ int main(int argc, char** argv)
 
     auto node = future.get();
 
-    saveYamlNodeToFile(node, output_directory_path_str, generateFileName(start_time));
+    saveYamlNodeToFile(node, output_directory_path_str + formatTimePoint(start_time) + '/', generateFileName(start_time));
   }
   catch (const std::exception& r_exception)
   {

@@ -34,7 +34,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-s", "--session_path", help="Path to session file to generate visuals for")
     parser.add_argument("-m", "--minimum_order", help="Minimum order (inclusive) to generate visuals with", nargs='?', default=0, type=int)
-    parser.add_argument("-v", "--video", help="Generates a video from session plot", action='store_true')
+    parser.add_argument("-v", "--video", help="Generates a video from session visuals", action='store_true')
     parser.add_argument("-f", "--fps", help="FPS of the generated video", nargs='?', default=1, type=int)
 
     args = parser.parse_args()
@@ -70,7 +70,8 @@ def main():
     for entry in session_dic["sequence"]:
 
         # Extract values from keys
-        epoch_time_stamp_s = entry["time_stamp"]
+
+        time_stamp = entry["time_stamp"]
         formatted_time_str = entry["formatted_time"]
         event_str = entry["event"]
         order_quantity_dic = entry["order_quantities"]
@@ -93,7 +94,7 @@ def main():
 
         # Append a BarPlot obj to the bar plot list to be generated and saved to file later
 
-        bar_plot_list.append(BarPlot(order_list, quantities_list, 'Memory Orders', 'Quantities', formatted_time_str + '\n' + event_str, visuals_directory_path + str(epoch_time_stamp_s) + 'png'))
+        bar_plot_list.append(BarPlot(order_list, quantities_list, 'Memory Orders', 'Quantities', formatted_time_str + '\n' + event_str, visuals_directory_path + str(time_stamp) + 'png'))
 
     # Generate and save bar plots
 
@@ -123,7 +124,7 @@ def main():
 
         # Create the video writer
 
-        video = cv.VideoWriter(video_directory_path + str(epoch_time_stamp_s) + '.avi', cv.VideoWriter_fourcc(*'XVID'), args.fps, (width, height))
+        video = cv.VideoWriter(video_directory_path + str(time_stamp) + '.avi', cv.VideoWriter_fourcc(*'XVID'), args.fps, (width, height))
 
         # Iterate over the visuals
 
@@ -136,7 +137,7 @@ def main():
 
         # Release the video writer (saves video to destination)
 
-        print("Saving video to " + video_directory_path + str(epoch_time_stamp_s) + '.avi')
+        print("Saving video to " + video_directory_path + str(time_stamp) + '.avi')
         video.release()
 
 if __name__ == "__main__":

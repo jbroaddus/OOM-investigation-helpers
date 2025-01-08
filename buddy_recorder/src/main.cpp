@@ -1,7 +1,7 @@
 /**
  * @file main.cpp
  * @author Tanner Broaddus (jbroaddus@path-robotics.com)
- * @brief
+ * @brief Records information regarding the availability of memory order and saves the session to file
  *
  */
 #include <atomic>
@@ -87,9 +87,9 @@ static termios NEW_T;
 // Static functions
 
 /**
- * @brief Get the Normal Line object
+ * @brief Returns the normal line from the /proc/buddyinfo file with associated time point
  *
- * @return std::string
+ * @return std::pair<std::string, TimePoint_t> normal line - time point pair
  */
 [[nodiscard]] static inline std::pair<std::string, TimePoint_t> getNormalLineWithTimePoint()
 {
@@ -116,10 +116,10 @@ static termios NEW_T;
 }
 
 /**
- * @brief Get the Order Values object
+ * @brief Parses the normal line string and returns the extract orders w/ associated quantities as a map
  *
- * @param normal_line_str
- * @return std::vector<int>
+ * @param normal_line_str normal line string extracted with getNormalLineWithTimePoint()
+ * @return OrderQuantityMap_t map representing memory orders with associated quantities
  */
 [[nodiscard]] static OrderQuantityMap_t getOrderQuantityMap(const std::string normal_line_str)
 {
@@ -133,7 +133,7 @@ static termios NEW_T;
 
   std::stringstream ss(normal_line_str.substr(pos + 6));  // Incrementing the starting position of the sub str by a constant 6 characters as that is
                                                           // the number of characters in "Normal"
-  int order { 0 };
+  int order{ 0 };
   int val;
   while (ss >> val)  // exctracting out each value for every order reported
   {
@@ -145,10 +145,13 @@ static termios NEW_T;
 }
 
 /**
- * @brief
+ * @brief Formats a time point to a sortable / readable format
  *
- * @param r_time_point
- * @return std::string
+ * @param r_time_point recorded time point
+ * @return std::string string representing formatted time point
+ *
+ * @note String format is the following: "<YEAR>_<MONTH>_<DAY>_<HOUR>_<MINUTE>_<SECOND>"
+ * @note Example: "2025_01_08_12_51_00"
  */
 [[nodiscard]] static inline std::string formatTimePoint(const TimePoint_t& r_time_point)
 {
@@ -162,10 +165,12 @@ static termios NEW_T;
 }
 
 /**
- * @brief
+ * @brief Formats a time point with the emphasis of human readability
  *
- * @param r_time_point
- * @return std::string
+ * @param r_time_point recorded time point
+ * @return std::string string representing human readable time point
+ *
+ * @note Example: "January 08, 2025 12:51:00"
  */
 [[nodiscard]] static inline std::string formatTimePointHumanReadable(const TimePoint_t& r_time_point)
 {
@@ -179,10 +184,10 @@ static termios NEW_T;
 }
 
 /**
- * @brief
+ * @brief Generates a unique file name for the session based on the recorded time point
  *
- * @param r_time_point
- * @return std::string
+ * @param r_time_point recorded time point
+ * @return std::string file name to save session to (with .yaml extension)
  */
 [[nodiscard]] static inline std::string generateFileName(const TimePoint_t& r_time_point)
 {
@@ -190,11 +195,11 @@ static termios NEW_T;
 }
 
 /**
- * @brief
+ * @brief Saves the yaml node representing the session to file
  *
- * @param r_node
- * @param r_directory_path
- * @param r_file_name
+ * @param r_node Node containing the session information
+ * @param r_directory_path Destination directory path where the file will be saved to
+ * @param r_file_name File name to use when saving the session to disk
  */
 static inline void saveYamlNodeToFile(const YAML::Node& r_node, const std::string& r_directory_path, const std::string& r_file_name)
 {
@@ -240,8 +245,9 @@ static inline void saveYamlNodeToFile(const YAML::Node& r_node, const std::strin
 }
 
 /**
- * @brief
+ * @brief Applies the desired terminal settings
  *
+ * @note Turns off canonical mode and input echo
  */
 static inline void applyTerminalSettings()
 {
@@ -252,7 +258,7 @@ static inline void applyTerminalSettings()
 }
 
 /**
- * @brief
+ * @brief Reestablishes old terminal settings that have been overriden at the start of the program
  *
  */
 static inline void cleanupTerminalSettings()
@@ -261,9 +267,9 @@ static inline void cleanupTerminalSettings()
 }
 
 /**
- * @brief
+ * @brief signal() compatible function for reestablishing old terminal settings using cleanupTerminalSettings()
  *
- * @param signum
+ * @param signum FD representing the signal that stopped the program's execution
  */
 static inline void cleanupTerminalSettingsAfterSignal(int signum)
 {
@@ -282,12 +288,12 @@ static inline void cleanupTerminalSettingsAfterSignal(int signum)
 }
 
 /**
- * @brief
+ * @brief Entry point for the recording thread
  *
- * @param parent_signal_stop
- * @param child_signal_abort
- * @param pause_time_ms
- * @return YAML::Node
+ * @param parent_signal_stop atomic boolean representing signal from the parent for the child thread to stop
+ * @param child_signal_abort atomic boolean representing signal from the child thread to the parent that the child thread is aborting
+ * @param pause_time_ms pause time per iteration in milliseconds, calculated based upon the targeted frequency provided by a CLI argument
+ * @return YAML::Node yaml node representing the information recorded during the session (to be saved to be file)
  */
 [[nodiscard]] YAML::Node recordingThreadEntryPoint(std::atomic_bool& parent_signal_stop,
                                                    std::atomic_bool& child_signal_abort,
@@ -306,6 +312,7 @@ static inline void cleanupTerminalSettingsAfterSignal(int signum)
 #ifdef DEBUG_LOGS
         std::cout << "Parent has signalled to stop the child, breaking the main child loop" << std::endl;
 #endif  // DEBUG_LOGS
+
         break;
       }
       // Get normal line from buddyinfo file with time point
@@ -354,6 +361,8 @@ int main(int argc, char** argv)
 {
   // Acquire start time of the program
   auto start_time = std::chrono::system_clock::now();
+
+  // Configure terminal settings (turn off canonical, echo modes; establish cleanup functions upon interuption/termination/exit)
 
   applyTerminalSettings();
   signal(SIGINT, cleanupTerminalSettingsAfterSignal);
@@ -473,6 +482,7 @@ int main(int argc, char** argv)
 #ifdef DEBUG_LOGS
           std::cout << "User has pressed the exit character! Setting parent_signal_stop=true and breaking the main polling loop" << std::endl;
 #endif  // DEBUG_LOGS
+
           parent_signal_stop = true;
           break;
         }
